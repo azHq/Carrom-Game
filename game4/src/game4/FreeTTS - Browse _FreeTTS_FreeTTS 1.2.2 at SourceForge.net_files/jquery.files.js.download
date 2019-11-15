@@ -1,0 +1,596 @@
+/*global SF, net, $, console, confirm */
+
+/*
+ * Files
+ *
+ * A file manager for use on the DIST project.
+ *
+ * Dependencies:
+ *     jquery.drawer.js - drawer
+ *     jquery.sf.notify.js - notification
+ *
+ */
+
+(function () {
+    $.fn.files = function(options) {
+        var o = $.extend({}, $.fn.files.defaults, options);
+        var $fm = $($(this)[0]);
+        $fm.addClass('fs-filemanager');
+        if (o.admin) {
+            $.fn.files.initToolbar.call(this);
+            $.fn.files.initCreateDialog.call(this, $fm);
+            $.fn.files.initAdminActions.call(this, $fm);
+        }
+        $.fn.files.init.call(this, $fm);
+        return $(this);
+    };
+
+
+    /*
+     * Function to open modal dialog, theme dependent
+     */
+    $.fn.files.openModal = function(selector) {
+        if ($.fn.dialog) {
+            $(SF.legacyThemeSelector(selector)).dialog('open');
+        }
+        if (SF.sandiego) {
+            $('body.sandiego ' + selector).foundation('open');
+        }
+    };
+
+    /*
+     * Function to close modal dialog, theme dependent
+     */
+    $.fn.files.closeModal = function(selector) {
+        if ($.fn.dialog) {
+            $(SF.legacyThemeSelector(selector)).dialog('close');
+        }
+        if (SF.sandiego) {
+            $('body.sandiego ' + selector).foundation('close');
+        }
+    };
+
+    /*
+     * Function to initialize the file manager toolbar.
+     */
+    $.fn.files.initToolbar = function() {
+        // add the toolbar
+        var $toolbar = $('.files-toolbar').fadeOut(0, function() {
+            $(this).css('visibility', 'visible').fadeIn();
+        });
+        // setup click handlers on the toolbar
+        $('.folder-create').click(function(e) {
+            e.preventDefault();
+
+            $.fn.files.openModal('#folder-create-dialog');
+
+            $('#folder-create-dialog input:text').focus().keyup(function(){
+                var valid = $.fn.files.valid_filename(this.value);
+                if (valid === true) {
+                    $('#folder-create-dialog .invalid').text('');
+                    $('#folder-create-dialog input[type=submit]').removeClass('ui-state-disabled').addClass('ui-state-default').removeAttr('disabled');
+                } else {
+                    $('#folder-create-dialog .invalid').text(valid);
+                    $('#folder-create-dialog input[type=submit]').addClass('ui-state-disabled').removeClass('ui-state-default').attr('disabled','disabled');
+                }
+            });
+        });
+    };
+
+    /*
+     * Function to initialize the folder creation dialog.
+     */
+    $.fn.files.initCreateDialog = function(filemanager) {
+        if ($.fn.dialog) {
+            // init the dialog itself
+            $(SF.legacyThemeSelector('#folder-create-dialog')).dialog({
+                autoOpen: false,
+                modal: true,
+                title: 'Create Folder',
+                width: 450
+            });
+            $('.ui-dialog').css({zIndex: 1000});
+        }
+        // setup the folder creation dialog's submit handler
+        $('#folder-create-dialog form').submit(function(e) {
+            e.preventDefault();
+            if ($('input:text', this).val()) {
+                $('label.error', this).removeClass('error');
+                $('span.error', this).remove();
+                $.fn.files.create.call(filemanager, this);
+            } else {
+                $('input:text', this).focus().select();
+                $('label', this).addClass('error');
+                $(this).prepend('<span class="error">The folder name is invalid, please try again.</span>');
+            }
+        });
+    };
+
+    /*
+     * Function to initialize admin actions, such as the delete button.
+     */
+    $.fn.files.initAdminActions = function(filemanager) {
+        if ($.fn.dialog) {
+            $(SF.legacyThemeSelector('#delete-confirm-dialog')).dialog({
+                autoOpen: false,
+                modal: true,
+                title: 'Confirm Delete',
+                width: 450
+            });
+        }
+
+        var $del, $details;
+        if (SF.sandiego) {
+            $del = $('<span title="Delete file" class="delete-button" data-open="delete-confirm-dialog"><svg class="svgico"><use xlink:href="#trash"></use></svg></span>');
+        } else{
+            $del = $('<span title="Delete file" data-icon="#" class="ico ico-trash delete-button" data-open="delete-confirm-dialog"></span>');
+        }
+        $('tbody .status', filemanager).append($del);
+        if (SF.sandiego) {
+            $details = $('<span class="info" title="View details"><svg class="svgico icon-info-circle"><use xlink:href="#info-circle"></use></svg></span>');
+        } else {
+            $details = $('<span class="info ico-info" title="View details">i</span>');
+        }
+        $('tbody .folder .status', filemanager).prepend($details);
+
+        $('#files_list', filemanager).on('click', '.delete-button', function(e) {
+            var target = $(e.target);
+            var parent = this;
+            $('#delete-confirm-error').hide();
+            var row = target.closest('tr').get(0);
+
+            $('#delete-confirm-filename').html($(row).attr('title'));
+
+            //open based on theme
+            $.fn.files.openModal('#delete-confirm-dialog');
+
+            $('#delete-confirm-form').bind('submit', function(e) {
+                e.preventDefault();
+                if( $('input:text',this).val() === 'DELETE') {
+                    $.fn.files.del.call(parent, row);
+
+                    $.fn.files.closeModal('#delete-confirm-dialog');
+                    return true;
+                } else {
+                    $('#delete-confirm-error').html('You must confirm with the word DELETE');
+                    $('#delete-confirm-error').fadeIn('slow');
+                    return false;
+                }
+            });
+            $('#delete-confirm-dialog').bind('dialogclose closed.zf.reveal', function() {
+                $('#delete-confirm-form').unbind('submit');
+            });
+        });
+    };
+
+    /*
+     * Configuration variable for the drawer widget.
+     */
+    $.fn.files.drawerConfig = {
+        selector: '#files-drawer',
+        anchor: 'tr'
+    };
+
+    /*
+     * Function to initialize all non-admin pieces of the file manager.
+     */
+    $.fn.files.init = function(filemanager) {
+        var $details;
+        if (SF.sandiego) {
+            // add non-admin actions
+            $details = $('<span class="info" title="View details"><svg class="svgico icon-info-circle"><use xlink:href="#info-circle"></use></svg></span>');
+            $('tbody .file .status', filemanager).prepend($details);
+            // add symlink icons
+            $('tbody .symlink .status', filemanager).prepend('<span title="Symlink"><svg class="svgico"><use xlink:href="#symlink"></use></svg></span>');
+        } else {
+            // add non-admin actions
+            $details = $('<span class="info ico-info" title="View details">i</span>');
+            $('tbody .file .status', filemanager).prepend($details);
+            // add symlink icons
+            $('tbody .symlink .status', filemanager).prepend('<b class="ico ico-linkout" data-icon="R" title="Symlink"></b>');
+            // add spacer icons to any rows missing an info icon
+            $('tbody .folder .status', filemanager).not('.status:has(.ico-info)').prepend('<span class="ico spacer">&nbsp;</span>');
+        }
+        // init the drawer
+        $('tbody .info', filemanager).drawer($.fn.files.drawerConfig);
+        // since tablesorter doesn't allow click events to bubble up
+        $(filemanager).bind('sortStart', function() {
+            $.fn.drawer.hide.call($('#files-drawer'), 'tr');
+        });
+        // setup various class states for the rows
+        $('#files_list tbody tr', filemanager).on('drawerShow', function(e) {
+            $(this).addClass('ui-state-active');
+        });
+        $('#files_list tbody tr', filemanager).on('drawerHide', function(e) {
+            $('#files_list tbody tr').removeClass('ui-state-active');
+        });
+    };
+
+    /*
+     * Function to handle saving of updated file info.
+     */
+    $.fn.files.saveHandler = function(data, tr) {
+        var file = net.sf.files[tr.title];
+        $.ajax({
+            url: $.fn.files.absurl.call(this, [file.name]),
+            type: 'PUT',
+            data: data,
+            beforeSend: function(xhr){
+                xhr.setRequestHeader("Accept","application/json; charset=utf-8");
+            },
+            success: function(data, statusText) {
+                // Update link and row title
+                var $nameEl = $(tr).find('.name'),
+                    $stagedEl = $(tr).find('.staged'),
+                    new_file = data.result,
+                    old_name = file.name,
+                    new_name = new_file.name,
+                    old_uri = encodeURIComponent(old_name),
+                    new_uri = encodeURIComponent(new_name);
+                // Update the displayed name
+                if (new_name.length > 49) {
+                    $nameEl.html(new_name.substr(0, 49) + '...');
+                } else {
+                    $nameEl.html(new_name);
+                }
+                // Update all the links within the row
+                $('th[headers=files_name_h] a', tr).each(function() {
+                    var new_href = $(this).attr('href').rsplit(old_uri, 1).join(new_uri),
+                        new_title = $(this).attr('title').replace(old_name, new_name);
+                    $(this).attr('href', new_href);
+                    $(this).attr('title', new_title);
+                });
+                // Update the row title
+                $(tr).attr('title', $(tr).attr('title').replace(old_name, new_name));
+
+                // Update the metadata
+                if (old_name !== new_name) {
+                    delete net.sf.files[old_name];
+                }
+                file.download_url = file.download_url.rsplit(old_uri, 1).join(new_uri);
+                file.url = file.url.rsplit(old_uri, 1).join(new_uri);
+                file.full_path = file.full_path.rsplit(old_name, 1).join(new_name);
+                file.name = new_name;
+                file.sha1 = new_file.sha1;
+                file.md5 = new_file.md5;
+                if (new_file.x_sf) {
+                    file['default'] = new_file.x_sf['default'] || '';
+                    file.download_label = new_file.x_sf.download_label || '';
+                    file.exclude_reports = new_file.x_sf.exclude_reports || false;
+                }
+                file.downloadable = new_file.downloadable;
+                file.staged = new_file.staged;
+                file.stage = new_file.stage;
+                file.explicitly_staged = new_file.explicitly_staged;
+                net.sf.files[file.name] = file;
+
+                // Make sure the (staged) label is in sync with the state of the file/folder
+                if (file.staged && !$stagedEl.length) {
+                    $nameEl.after('<span class="staged">(staged)</span>');
+                }
+                else if (!file.staged && $stagedEl.length) {
+                    $stagedEl.remove();
+                }
+
+                if (file.exclude_reports === false) {
+                    $('.exclude-reports span', tr).removeClass('ico ico-noentry');
+                    $('.exclude-reports .svgico', tr).remove();
+                } else {
+                    if (SF.sandiego) {
+                        $('.fs-stats', tr).replaceWith('<a class="fs-stats ui-corner-all no-recent-downloads exclude-reports file" title="Statistics are not counted for this file"><svg class="icon-ban"><use xlink:href="#ban"></use></svg></a>');
+                    } else {
+                        $('.fs-stats', tr).replaceWith('<a class="fs-stats ui-corner-all no-recent-downloads exclude-reports file" title="Statistics are not counted for this file"><span data-icon="d" class="ico ico-noentry"></span></a>');
+                    }
+                }
+
+                // Push out the success message
+                $('#messages').notify({
+                    status: 'success',
+                    message: 'File properties have been updated.'
+                });
+            },
+            error: function(data, statusText) {
+                var exc = {};
+                try {
+                    exc = $.parseJSON(data.responseText);
+                } catch (e) {
+                    if (window.console) {
+                        console.error("Invalid JSON: " + data.responseText);
+                    }
+                }
+                if (!('error' in exc) || typeof(exc.error) !== 'string') {
+                    exc.error = 'An error occurred while updating file properties';
+                }
+                $('#messages').notify({
+                    status: 'error',
+                    message: exc.error
+                });
+            }
+        });
+    };
+
+    /*
+     * Function to load and update metadata inside file properties dialog.
+     * Only specific fields are updated currently.
+     */
+    $.fn.files.updateMetadata = function($row, mirrors_only) {
+        var file = net.sf.files[$row.attr('title')];
+        var render = function() {
+            // update the row in the table
+            if ($row.find('.mirror-status').length) {
+                if ($('.mirror-status .mirrors', $row).length) {
+                    $('.mirror-status .mirrors', $row).html(file.mirrors);
+                    if(file.mirrors > 1) {
+                        $('.mirror-status .mirrorsw', $row).html('mirrors');
+                    }
+                } else if (file.mirrors > 0) {
+                    var html = [
+                        '<a class="',
+                        'mirror-status ' + (file.type === 'f') ? 'folder' : 'file',
+                        '" href="#mirror_status" title="Check on the file status">',
+                        'On <span class="mirrors">',
+                        file.mirrors,
+                        '</span> ',
+                        '<span class="mirrorsw">',
+                        (file.mirrors > 1) ? 'mirrors' : 'mirror',
+                        '</span>',
+                        '&#8230;',
+                        '</a>'
+                    ].join('');
+                    $('.mirror-status', $row).html(html);
+                }
+                // NOTE: not sure what this does... Bueller? Bueller?
+                if (file.downloadable) {
+                    $('.downloadable', $row).remove();
+                }
+            }
+            net.sf.files[$row.attr('title')] = file;
+
+            $('.default input:checkbox').each(function() {
+                if (file['default'].indexOf(this.value) >= 0) {
+                    this.checked = true;
+                } else {
+                    this.checked = false;
+                }
+            });
+
+            // if the file is downloadable now, hide the "your file isn't downloadable" notice
+            if (file.downloadable === true && $('.info:visible', '#file_properties_content').length) {
+                $('.info:visible', '#file_properties_content').slideUp();
+            }
+        };
+
+        $.getJSON(file.url + 'metadata', function(data) {
+            file.mirrors = data.mirrors;
+            file.downloadable = data.downloadable;
+            if (!mirrors_only) {
+                file['default'] = data.x_sf['default'] || '';
+            }
+            render();
+        });
+
+    };
+
+    /*
+     * Function to create folders; el is the form submitted with the
+     * new folder name.
+     */
+    $.fn.files.create = function(el) {
+        var $el = $(el);
+        $.ajax({
+            url: $.fn.files.absurl.call(this, []),
+            type: 'POST',
+            data: $el.serialize(),
+            beforeSend: function(xhr){
+                xhr.setRequestHeader("Accept","application/json; charset=utf-8");
+            },
+            success: function(data, statusText) {
+                var folder = data.result,
+                    name = folder.name || '',
+                    staged_html = folder.staged ? '<span class="staged">(staged)</span>' : '';
+                var html = [
+                    '<tr class="folder" title="' + name + '">',
+                    '<th headers="files_name_h" scope="row">'
+                ];
+                if (!SF.sandiego) {
+                    html.push('<span data-icon="o" class="ico ico-folder"></span>');
+                }
+                html.push('<a title="Click to enter ' + name + '" href="');
+                html.push(encodeURIComponent(name));
+                html.push('">');
+                if (SF.sandiego) {
+                    html.push('<svg class="svgico"><use xlink:href="#folder-o"></use></svg> ');
+                }
+                html.push('<span class="name">' + name +  '</span></a>');
+                html = html.concat([
+                    staged_html,
+                    '</th>',
+                    '<td class="opt" headers="files_date_h">now</td>',
+                    '<td class="opt" headers="files_size_h"></td>',
+                    '<td class="opt" headers="files_downloads_h">',
+                    '<a class="fs-stats ui-corner-all no-recent-downloads folder" href="TEST%202/stats/timeline"></a>',
+                    '</td>',
+                    '<td class="status" headers="files_status_h">'
+                ]);
+                if (SF.sandiego) {
+                    html.push('<span class="info" title="View details"><svg class="svgico icon-info-circle"><use xlink:href="#info-circle"></use></svg></span>');
+                    html.push('<span title="Delete file" class="delete-button" data-open="delete-confirm-dialog"><svg class="svgico"><use xlink:href="#trash"></use></svg></span>');
+                } else {
+                    html.push('<span class="info ico-info" title="View details">i</span>');
+                    html.push('<span data-icon="#" class="ico ico-trash delete-button" title="Delete file" data-open="delete-confirm-dialog"></span>');
+                }
+                html.push('</td>');
+                html.push('</tr>');
+                var $row = $(html.join(''));
+
+                $el.trigger('filesCreate');
+
+                $.fn.files.closeModal('#folder-create-dialog');
+
+                $('#folder-create-dialog input:text').val('');
+                $('#files_list tbody').prepend($row);
+                if ($.fn.effect) {
+                    $row.effect('highlight');
+                }
+
+                if (!net.sf.files) {
+                    net.sf.files = {};
+                }
+                net.sf.files[name] = {
+                    name: name,
+                    download_url:'',
+                    url:'',
+                    full_path:'',
+                    type:'d',
+                    staged: folder.staged,
+                    stage: folder.stage,
+                    explicitly_staged: folder.explicitly_staged,
+                    staging_days: net.sf.staging_days,
+                    authorized: true
+                };
+                net.sf.files[name]['default'] = '';  // YUI compressor doesn't like "default" as a key in the object above
+
+                // setup all the widgets for this new row
+                $('.info', $row).drawer($.fn.files.drawerConfig);
+
+                $('#messages').notify({
+                    status: 'success',
+                    message: 'The folder "' + name + '" has been created.'
+                });
+            },
+            error: function(data, statusText) {
+                $.fn.files.closeModal('#folder-create-dialog');
+                var exc = {};
+                try {
+                    exc = $.parseJSON(data.responseText);
+                } catch (e) {
+                    if (window.console) {
+                        console.error("Invalid JSON: " + data.responseText);
+                    }
+                }
+                if (!('error' in exc) || typeof(exc.error) !== 'string') {
+                    exc.error = 'An error occurred while creating the folder.';
+                }
+                $('#messages').notify({
+                    status: 'error',
+                    message: exc.error
+                });
+            }
+        });
+    };
+
+    /*
+     * Function to delete a folder or file; el is the parent element
+     * (typically a tr) for the folder or file being deleted;
+     * show_success_message is a boolean to control whether to show the success
+     * message or not.
+     */
+    $.fn.files.del = function(el, show_success_message) {
+        var $el = $(el),
+            path = $el.attr('title'),
+            errors = 0,
+            successes = 0,
+            warn = false;
+        function del_helper() {
+            show_success_message = typeof(show_success_message) !== 'undefined' ? show_success_message : true;
+            $.ajax({
+                url: $.fn.files.absurl.call(this, [path]),
+                type: 'DELETE',
+                beforeSend: function(xhr){
+                    xhr.setRequestHeader("Accept","application/json; charset=utf-8");
+                },
+                success: function(data, statusText) {
+                    // DIST-391: forces the tablesorter plugin to update internal caches
+                    $el.closest('table').trigger('update');
+                    $el.trigger('filesDelete').remove();
+                    successes += 1;
+                    if (show_success_message) {
+                        var filetype = data.result.folder ? "folder" : "file";
+                        $('#messages').notify({
+                            status: 'success',
+                            message: 'The "' + data.result.name + '" ' + filetype + ' has been deleted.'
+                        });
+                    }
+                },
+                error: function(data, statusText) {
+                    errors += 1;
+                    var exc = {};
+                    try {
+                        exc = $.parseJSON(data.responseText);
+                    } catch (e) {
+                        if (window.console) {
+                            console.error("Invalid JSON: " + data.responseText);
+                        }
+                    }
+                    var message;
+                    if (exc === null || typeof(exc) !== 'object' || !('error' in exc) || typeof(exc.error) !== 'string') {
+                        if (window.console) {
+                            console.error("Unknown 'exc' type");
+                            console.log(exc);
+                            console.log(data);
+                        }
+                        message = 'An error occurred while attempting to delete "' + path + '".';
+                    } else {
+                        message = exc.error;
+                    }
+                    $('#messages').notify({
+                        status: 'error',
+                        message: message
+                    });
+                }
+            });
+        }
+        if ($el.hasClass('warn')) {
+            warn = true;
+        }
+        if (warn) {
+            if (confirm('Links to "' + path +'" will no longer work. Are you sure you want to delete it?')) {
+                del_helper();
+            }
+        } else {
+            del_helper();
+        }
+    };
+
+    /*
+     * Function to create an absolute link from a relative path.
+     * The relative path (in the form of an array) is joined to the
+     * current location to create the absolute path.
+     */
+    $.fn.files.absurl = function(path) {
+        var href = window.location.pathname;
+        // loop through and make sure elements of the path are properly
+        // escaped
+        for (var i = 0; i < path.length; i += 1) {
+            path[i] = encodeURIComponent(path[i]);
+        }
+        return (href.lastIndexOf('/') + 1 === href.length) ?
+            href + path.join('/') : href + '/' + path.join('/');
+    };
+
+    /*
+     * Function to validate a filename, per PFS requirements
+     */
+    $.fn.files.valid_filename = function(filename) {
+        var pattern = new RegExp('^[a-zA-Z0-9_ +.,=#~@!()\\[\\]-]+$');
+        var result;
+        if (filename.length === 0) {
+            result = 'The name is too short.';
+        } else if (filename.slice(0,1) === '.') {
+            result = 'The name cannot start with ".".';
+        } else if (filename.slice(0,1) === ' ') {
+            result = 'The name cannot start with a space.';
+        } else if (filename.slice(-1) === ' ') {
+            result = 'The name cannot end with a space.';
+        } else if (!pattern.test(filename)) {
+            result = 'May only contain a-zA-Z0-9_+-.,=#~@!()[] (including " " - space).';
+        } else {
+            result = true;
+        }
+        return result;
+    };
+
+    $.fn.files.defaults = {
+        admin: false
+    };
+}());

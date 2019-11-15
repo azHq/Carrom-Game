@@ -1,0 +1,291 @@
+/*global net, jQuery, Handlebars, addCommas, SF */
+/*jslint sub: true */
+
+/*
+ * Drawer
+ *
+ * A drawer widget for DIST; rolled our own because most of the
+ * jQuery menu/dropdown plugins out there are navigation-focused. Those
+ * that aren't are married to a particular event like right-clicking.
+ * With that said this plugin is prime for being replaced by a 3rd
+ * party implementation.
+ */
+
+(function ($) {
+    Handlebars.registerHelper('stage_message', function(scope, days) {
+        if (scope.staged && !scope.explicitly_staged) {
+            return 'Staging inherited from parent folder';
+        } else {
+            return 'Stage this folder for '+days+' days';
+        }
+    });
+
+    Handlebars.registerHelper('stage_onclick', function(scope) {
+        if (scope.staged && !scope.explicitly_staged) {
+            return 'onclick="return false;"';
+        } else {
+            return '';
+        }
+    });
+
+    Handlebars.registerHelper('checked', function(bool) {
+        return bool ? 'checked="checked"' : '';
+    });
+
+    Handlebars.registerHelper('file_title_url', function(scope) {
+        return scope.type === 'f' ? scope.download_url : scope.url;
+    });
+
+    Handlebars.registerHelper('stage_date', function(scope) {
+        if (scope.staged) {
+            var date = new Date(scope.stage * 1000).toUTCString();
+            return 'This file is staged until '+date;
+        } else {
+            return '';
+        }
+    });
+
+    Handlebars.registerHelper('download_display', function(downloads) {
+        if (downloads === null) {
+            return 'Not counted';
+        } else {
+            return addCommas(downloads);
+        }
+    });
+
+    Handlebars.registerHelper('should_exclude_reports', function(exclude_reports) {
+        return exclude_reports === true ? 'checked' : '';
+    });
+
+    $.fn.drawer = function(options) {
+        var opts = $.extend({}, $.fn.drawer.defaults, options);
+        return $(this).each(function() {
+            var o = $.metadata ? $.extend(opts, $(this).metadata()) : opts,
+                self = this,
+                $drawer = $(o.selector),
+                $anchor = (o.anchor) ? $(self).closest(o.anchor) : $(self);
+
+            // setup the actual binding of the drawer trigger
+            $(self).bind(o.evt, o.data, function(e) {
+                // handle any elements we don't want triggering the drawer
+                if (o.filter && o.filter.search(new RegExp(e.target.tagName, 'i')) >= 0) {
+                    return true;
+                }
+
+                // hide the menu if it's already open
+                $.fn.drawer.hide.call($drawer, $anchor);
+
+                // show the drawer
+                $.fn.drawer.show.call($drawer, $anchor);
+
+                // If we're authorized, and opening the drawer for a file, refresh it's meta data
+                var file = net.sf.files[$anchor.attr('title')];
+                if ($('.delete-button', $anchor).length) {
+                    if (file.type === 'f') {
+                        $.ajax({
+                            url: file.url + 'metadata',
+                            global: false,
+                            dataType: 'json',
+                            success: function(data) {
+                                $('#mirror_count').text('mirror'.pluralize(data.mirrors));
+                                // setup the "select all" link for the platform checkboxes
+                                var selectAll = true;
+                                $('a[href=#select_all]').click(
+                                    function(e) {
+                                        e.preventDefault();
+                                        $('.default input:checkbox').each(function() {
+                                            this.checked = selectAll;
+                                        });
+                                        $(this).text(selectAll ?  'Deselect all' : 'Select all');
+                                        $.fn.drawer.data_changed = true;
+                                        selectAll = !selectAll;
+                                    }
+                                );
+                            }
+                        });
+                    }
+                }
+
+                // set dirty data flag
+                $(':input:not(:hidden,:submit,:password,:button)', $('.fs-drawer')[0]).on('change paste', function() {
+                    $.fn.drawer.data_changed = true;
+                });
+
+                // implement key navigation
+                $(document).keyup(function(e) {
+                    if (e.keyCode === 27) {
+                        $(document).trigger('click');
+                    }
+                });
+
+                // handle hiding the drawer
+                setTimeout(function() {
+                    $(document).click(function(e) {
+                        // ignore clicks within the drawer
+                        if (!$(e.target).parents(o.selector).length) {
+                            $(document).unbind('click').unbind('keypress');
+                            $.fn.drawer.hide.call($drawer, self);
+                        }
+                    });
+                }, 0);
+
+                return false;
+            });
+
+            return true;
+        });
+    };
+
+    $.fn.drawer.defaults = {
+        evt: 'click',
+        selector: '#drawer',
+        anchor: false
+    };
+
+    $.fn.drawer.data_changed = false;
+
+    $.fn.drawer.show = function(anchor) {
+        var t = $(anchor).offset().top,
+            l = $(anchor).offset().left - 1,
+            w = $(anchor).outerWidth(),
+            file = net.sf.files[$(anchor).attr('title')];
+
+        var defaults = [
+            { value: 'windows', label: 'Windows' },
+            { value: 'mac', label: 'Mac OS X' },
+            { value: 'linux', label: 'Linux' },
+            { value: 'android', label: 'Android' },
+            { value: 'bsd', label: 'BSD' },
+            { value: 'solaris', label: 'Solaris' },
+            { value: 'others', label: 'Others' }
+        ];
+
+        file['exclude_reports'] = file.exclude_reports === 'True' ? true : false;
+        file['d_type'] = file.type === 'd' ? true : false;
+        file['f_type'] = file.type === 'f' ? true : false;
+        file['not_downloadable'] = file.downloadable ? false : true;
+        file['show_platforms'] = false;
+        if (file.download_label) { file['download_label'] = file.download_label.replace('\"', '&#34;'); }
+
+        var platforms = [];
+        for (var i = 0, len = defaults.length; i < len; i++) {
+            var d = defaults[i];
+            var platform = {value:d.value, title:d.label, authorized: file['authorized'], skip:true, _checked:''};
+            if (file['default'].indexOf(d.value) > -1) {
+                file['show_platforms'] = true;
+                platform['skip'] = false;
+                platform['_checked'] = 'checked';
+            }
+            platforms.push(platform);
+        }
+        file['platforms'] = platforms;
+
+        // populate the drawer with the rendered template
+        var source = $('#file-drawer-template').html();
+        var template = Handlebars.compile(source);
+        Handlebars.registerPartial('platform', $('#platform-partial').html());
+
+        $(this).html(template(file));
+
+        $.fn.drawer.data_changed = false;
+
+        // TODO refactor this into a loop
+        $('.files-date', this).html($('td[headers=files_date_h]', anchor).html());
+        $('.files-size', this).html($('td[headers=files_size_h]', anchor).html());
+        $('.files-downloads', this).html($('td[headers=files_downloads_h]', anchor).html());
+        $('.files-status', this).html($('td[headers=files_status_h]', anchor).html());
+
+        // warnings for changing filename, or using an invalid name
+        var $name = $('input[name=name]', this);
+        if ($name && $name.length) {
+            var prev_value = $name[0].value;
+            $name.keyup(function(){
+                var valid = $.fn.files.valid_filename(this.value);
+
+                if (valid !== true || (this.value !== prev_value && file.downloads > 0)) {
+                    if (valid !== true) {
+                        $('#name_message').removeClass('hide').text(valid);
+                    } else if (this.value !== prev_value && file.type === 'd') {
+                        $('#name_message').removeClass('hide').text('If you rename this folder, links to its files will break, and the download counts and reports will be reset.');
+                    } else if (this.value !== prev_value) {
+                        $('#name_message').removeClass('hide').text('If you rename this file, links to it will break, and the download count and reports will be reset.');
+                    } else {
+                        $('#name_message').addClass('hide').text('');
+                    }
+                } else {
+                    $('#name_message').addClass('hide').text('');
+                }
+            });
+        }
+
+        // setup states for the save button
+        $('.fg-button', this).bind('mouseover mouseout mousedown mouseup', function(e) {
+            if (e.type === 'mouseover') {
+                $(this).addClass('ui-state-hover');
+            } else if (e.type === 'mouseout') {
+                $(this).removeClass('ui-state-hover');
+            } else if (e.type === 'mousedown') {
+                $(this).addClass('ui-state-active');
+            } else if (e.type === 'mouseup') {
+                $(this).removeClass('ui-state-active');
+            }
+        });
+
+        // setup selecting for selectable regions
+        $('.selectable', this).bind('click', function(e) {
+            $(this).seltext();
+        }).wrapInner("<span></span>").hover(function() {
+            var contentwidth = $(this).contents().width();
+            var blockwidth = $(this).width();
+            var drawerwidth = $(this).offsetParent().width() - $(this).position().left - 15;
+            if (contentwidth > blockwidth) {
+                $(this).stop().animate({ width: Math.min(contentwidth, drawerwidth) }, 250);
+                }
+            }, function() {
+                $(this).stop().animate({ width: "97%" }, 250);
+        });
+
+        // if the info icon inside the drawer is clicked, hide the drawer
+        $('.info, #cancel', this).bind('click', function(e) {
+            e.preventDefault();
+            $.fn.drawer.hide.call($('.fs-drawer'), $(anchor));
+        });
+
+        // bind the delete button
+        $('.delete-button', this).click(function(e) {
+            $.fn.drawer.hide.call($('.fs-drawer'), anchor);
+            $.fn.files.del.call(this, anchor);
+        });
+
+        // wire in the actual saving of the updated file data
+        $('form#file_properties_content').unbind('submit').bind('submit',function(e) {
+            e.preventDefault();
+            if ($.fn.drawer.data_changed) {
+                if ($('#download_label').val() === $('#download_label').attr('placeholder')) {
+                    $('#download_label').val('');
+                }
+                $.fn.files.saveHandler($(this).serialize(), $(anchor).get(0));
+            }
+            $.fn.drawer.hide.call($('.fs-drawer'), anchor);
+        });
+
+        $('input[name=name]', this).focus();
+
+        if ((t + $(this).height()) > ($(window).scrollTop() + $(window).height())) {
+            var delta = (t + $(this).height()) - ($(window).scrollTop() + $(window).height());
+            delta += 12; // Some padding
+            $(window).scrollTo('+=' + delta + 'px');
+        }
+        if (SF.sandiego) {
+            $(this).css({top: anchor.position().top}).show();
+        } else {
+            $(this).css({top: anchor.position().top, left: anchor.position().left, width: '100%'}).show();
+        }
+        $(anchor).trigger('drawerShow');
+    };
+
+    $.fn.drawer.hide = function(anchor) {
+        $(this).hide();
+        $(anchor).trigger('drawerHide');
+    };
+}(jQuery));

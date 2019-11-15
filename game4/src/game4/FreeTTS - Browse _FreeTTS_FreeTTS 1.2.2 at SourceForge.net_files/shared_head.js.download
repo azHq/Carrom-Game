@@ -1,0 +1,211 @@
+/*global SF, jQuery, $, console, Handlebars */
+
+if (!window.SF) {
+    window.SF = {};
+}
+SF.Ads = SF.Ads || {};
+
+//# Polyfill - addEventListener in IE8
+window.addEventListener = window.addEventListener || function (e, f) { window.attachEvent('on' + e, f); };
+
+/*! GetDevicePixelRatio | Author: Tyson Matanich, 2012 | License: MIT */
+// https://github.com/tysonmatanich/GetDevicePixelRatio
+// provides window.getDevicePixelRatio
+(function(n){n.getDevicePixelRatio=function(){var t=1;return n.screen.systemXDPI!==undefined&&n.screen.logicalXDPI!==undefined&&n.screen.systemXDPI>n.screen.logicalXDPI?t=n.screen.systemXDPI/n.screen.logicalXDPI:n.devicePixelRatio!==undefined&&(t=n.devicePixelRatio),t;};})(this);
+
+//namespaced handlers for GPT helpers
+SF.Ads.Helpers = {
+    parseUnitNameFromPath : function(path){
+        var nameNoPath = path.substring(path.lastIndexOf('/')+1);
+        return nameNoPath;
+    },
+    getContainerIDFromPath : function(path){
+        var nameNoPath = SF.Ads.Helpers.parseUnitNameFromPath(path);
+        return '#' + nameNoPath + '_wrapped';
+    },
+    getPathFromContainerID : function(id) {
+        var unit_id = $('#' + id).parent('.draper').attr('id');
+        if (unit_id) {
+            return unit_id.replace('_wrapped', '');
+        } else {
+            console.warn('Could not find id for ' + id);
+        }
+    },
+    getAdRenderData: function(ad){
+        // currently ad.slot.o._html_ has what we're looking for but the "o" could easily change with updates to GPT js
+        for (var attr in ad.slot) {
+            if (ad.slot[attr] && ad.slot[attr]._html_) {
+                return ad.slot[attr];
+            }
+        }
+    },
+    getSizeDelivered: function(ad){
+        // ads delivered via prebid have their ad.slot.size set at 1x1
+        // so, we'll find the iframe and look at it's rendered dimensions.
+        if (ad.isEmpty) {
+            return null;
+        }
+        var path = ad.slot.getName();
+        var container = SF.Ads.Helpers.getContainerIDFromPath(path);
+        var frame = $('iframe', container);
+        return frame.width() + 'x' + frame.height();
+    },
+    getSizeAndSetClass: function(e) {
+        var $wrappedAd = $(SF.Ads.Helpers.getContainerIDFromPath(e.slot.getAdUnitPath()));
+        $wrappedAd.addClass('delivered');
+        if ($wrappedAd.attr('class').indexOf('sz_') !== -1) {
+            // already set
+            return true;
+        }
+        var size = e.size;
+        if (size && size[0] === 1 && size[1] === 1) {
+            // if size is 1x1, ensure it's really correct
+            size = SF.Ads.Helpers.getSizeDelivered(e);
+        }
+        //sizes might be expressed with commas or X's, depending on where it was calculated
+        var sz_class = 'sz_' + size.toString().replace(',', '_').replace('x', '_');
+        if (sz_class !== 'sz_1_1') {
+            $wrappedAd.addClass(sz_class);
+            return true;
+        }
+    }
+};
+
+SF.Ads.Advertisers = {
+    AdxAdsense: 1276890381,
+    NewAdx: 2036965341,
+    Prebid: 1478656221,
+    House: 1329521181,
+    SF_Deals: 14275154,
+};
+
+//namespaced handlers for GPT event listeners, can be used by individual slots via "client_render_handler" in g.ads list
+SF.Ads.RenderHandlers ={
+    revealIfDelivers:function(e){
+        try {
+            var path = e.slot.getName();
+            var id = SF.Ads.Helpers.getContainerIDFromPath(path);
+            var $wrap = $(id);
+
+            $wrap.removeClass('revealIfDelivers');
+        }
+        catch(err) {
+            console.error(err);
+        }
+    },
+    viewabilityInstrumentation: function(e) {
+        var unitName = e.slot.getName();
+        var $wrappedAd = $(SF.Ads.Helpers.getContainerIDFromPath(e.slot.getAdUnitPath()));
+        if (SF.Ads.fancyStickify) {
+            SF.Ads.fancyStickify.reachedViewability($wrappedAd);
+        }
+        $wrappedAd.addClass('viewableImpression');
+        if (SF.Ads.visualViewabilityIndicators ) {
+            $wrappedAd.addClass('viewableImpressionIndicator');
+        }
+        console.log('======== ' + unitName + ' viewability met   ==================');
+    },
+    visibilityInstrumentation: function(e) {
+        var unitName = event.slot.getName();
+        console.log('======== ' + unitName + ' visibility change   ==================');
+        console.log(event);
+    },
+    exampleCustomHandler :function(e){
+        if(window.console){
+            console.log('position ' + e.slot.b + ' ' + (e.isEmpty ? 'is empty ' : 'rendered!'));
+        }
+    },
+    decorateSizeDelivered: function(e){
+        // somewhat often prebid ads have size 1x1 (even the iframe size) so we need to poll for it
+        if (!SF.Ads.Helpers.getSizeAndSetClass(e)) {
+            var attempts = 0;
+            var trySizeAgain = function(){
+                attempts += 1;
+                if (!SF.Ads.Helpers.getSizeAndSetClass(e) && attempts < 10) {
+                    window.setTimeout(trySizeAgain, 100);
+                }
+            };
+            window.setTimeout(trySizeAgain, 10);
+        }
+    },
+    checkDirectSoldForLeadForm: function(e){
+        var direct_sold = (!e.isEmpty && e.advertiserId &&
+                           e.advertiserId !== SF.Ads.Advertisers.AdxAdsense &&
+                           e.advertiserId !== SF.Ads.Advertisers.NewAdx &&
+                           e.advertiserId !== SF.Ads.Advertisers.Prebid &&
+                           e.advertiserId !== SF.Ads.Advertisers.House);
+        var $iframe = $('iframe[data-src-small]');
+        var src_attr = direct_sold ? 'data-src-small' : 'data-src-big';
+        $iframe.attr('src', $iframe.attr(src_attr));
+    }
+};
+
+SF.Ads.listenerForBlockThis = function(e){
+    try {
+        SF.Ads.renderedAds = SF.Ads.renderedAds || [];
+        SF.Ads.renderedAds.push(e);
+        if (!e.isEmpty) {
+            var dom_selector = SF.Ads.Helpers.getContainerIDFromPath(e.slot.getName());
+            if (!e.advertiserId ||
+                e.advertiserId === SF.Ads.Advertisers.AdxAdsense ||
+                e.advertiserId === SF.Ads.Advertisers.NewAdx ||
+                e.advertiserId === SF.Ads.Advertisers.Prebid) {
+                $(dom_selector).append('<span class="lbl-ad">Advertisement - <a href="#" class="btn-blockthis">Report</a></span>');
+            } else {
+                $(dom_selector).append('<span class="lbl-ad">Advertisement</span>');
+            }
+        }
+    }
+    catch(err) {
+        window.console.error(err);
+    }
+};
+
+SF.Widgets = SF.Widgets || {};
+SF.Widgets.ConsentTrackingForm = (function(){
+    var defaults = {};
+
+    function ctor($form, options){
+        this.$form = $form;
+        this.userChoices = [];
+
+        this.init();
+        this.wireEvents();
+    }
+
+    ctor.prototype.init = function(){
+        this.$form.append('<input type="hidden" name="all_consent">');
+        this.$allConsent = $('input[name=all_consent]', this.$form);
+
+    };
+    ctor.prototype.wireEvents = function(){
+        this.$form.bind('submit', this.submit.bind(this));
+    };
+
+    ctor.prototype.trackChoices = function(e){
+        var userChoices = [];
+        $("input[data-consent-action]:checked, [data-consent-notice]", this.$form).each(function(t, v){
+            var id = $(v).attr('data-consent-id');
+            userChoices.push(id);
+        });
+        this.userChoices = userChoices;
+        this.$allConsent.val(JSON.stringify(this.userChoices));
+    };
+
+    ctor.prototype.submit = function(e){
+        this.trackChoices();
+        return true;
+    };
+
+    return ctor;
+})();
+
+
+SF.wire_up_subscribe_form = function(index, form) {
+    var handler = $(form).attr('data-handler');
+    /*jshint ignore:start*/
+    new SF.Widgets[handler ? handler : 'EmailComplianceWidget']({
+        selector: form,
+    });
+    /*jshint ignore:end*/
+};

@@ -1,0 +1,540 @@
+/**
+ *
+ * Important Note:
+ * Module-style features of TS are unavailable here (imports, exports, modules, namespaces, globals, etc),
+ * as the environment currently lacks utilities for module loading (provided by frameworks like babel, webpack, etc)
+ *
+ */
+var __extends = (this && this.__extends) || (function () {
+    var extendStatics = Object.setPrototypeOf ||
+        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+        function (d, b) { for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p]; };
+    return function (d, b) {
+        extendStatics(d, b);
+        function __() { this.constructor = d; }
+        d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+    };
+})();
+Array.prototype.contains = function (str) {
+    try {
+        return this.indexOf(str) > -1;
+    }
+    catch (error) {
+    }
+    return false;
+};
+var CountryGroups = (function () {
+    function CountryGroups() {
+    }
+    return CountryGroups;
+}());
+var BaseRules = (function () {
+    function BaseRules(EU_country_codes, unknown_country_codes) {
+        this.countryGroups = new CountryGroups();
+        this.countryGroups.US = ['US'];
+        this.countryGroups.CA = ['CA'];
+        this.countryGroups.GDPR = EU_country_codes || SF.EU_country_codes;
+        this.countryGroups.unknownCountries = unknown_country_codes || SF.unknown_country_codes;
+    }
+    /** Determines if the passed country requires a State to be specified along with it */
+    BaseRules.prototype.requireState = function (country) {
+        if (this.countryGroups.US.contains(country)) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    };
+    /** Determines if the passed country allows pre-checking of checkboxes */
+    BaseRules.prototype.allowPrechecked = function (country) {
+        var groups = this.countryGroups.CA.concat(this.countryGroups.GDPR).concat(this.countryGroups.unknownCountries);
+        if (groups.contains(country)) {
+            return false;
+        }
+        else {
+            return true;
+        }
+    };
+    /** Determines if the passed country requires topics/communication methods for Resources newsletter */
+    BaseRules.prototype.requireResourcesOptins = function (country) {
+        if (this.countryGroups.GDPR.contains(country)) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    };
+    /** Determines if the passed country requires a consent checkbox for the entire form,
+     * with an optional argument to state whether or not general consent is applicable
+     */
+    BaseRules.prototype.requireGeneralConsent = function (country, applicable) {
+        if (applicable === void 0) { applicable = true; }
+        return applicable;
+    };
+    /** Determines if the passed country requires the user to check boxes for each thing they're subscribing to
+     * (essentially disallowing any assumed consent)
+     * This is separate from requirGeneralConsent()
+     */
+    BaseRules.prototype.requireMinimalExplicitConsent = function (country) {
+        return this.countryGroups.GDPR.contains(country);
+    };
+    /** Determines if the passed country requires a special extra general consent checkbox (ie, for GDPR) */
+    BaseRules.prototype.requireSpecialGeneralConsent = function (country) {
+        return false;
+    };
+    /**  */
+    /** Determines if the passed country +form requires at least one of a set of optins to be checked before proceeding)
+     * Essentially means that no optins can be assumed on the form
+     */
+    BaseRules.prototype.requireAtLeastOneOptIn = function (country) {
+        return false;
+    };
+    return BaseRules;
+}());
+var NewsletterFormRules = (function (_super) {
+    __extends(NewsletterFormRules, _super);
+    function NewsletterFormRules() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    NewsletterFormRules.prototype.assumeBothNewsletters = function (country) {
+        if (this.countryGroups.GDPR.contains(country)) {
+            return false;
+        }
+        else {
+            return true;
+        }
+    };
+    NewsletterFormRules.prototype.assumeSitewideOnly = function (country) {
+        if (this.countryGroups.GDPR.contains(country)) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    };
+    NewsletterFormRules.prototype.useCombinedNewslettersCheckbox = function (country) {
+        return false;
+    };
+    NewsletterFormRules.prototype.requireSpecialGeneralConsent = function (country) {
+        return this.countryGroups.GDPR.contains(country);
+    };
+    return NewsletterFormRules;
+}(BaseRules));
+var KMUFormRules = (function (_super) {
+    __extends(KMUFormRules, _super);
+    function KMUFormRules() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    KMUFormRules.prototype.requireAtLeastOneOptIn = function (country) {
+        var groups = this.countryGroups.CA.concat(this.countryGroups.GDPR);
+        return groups.contains(country);
+    };
+    KMUFormRules.prototype.assumeKMU = function (country) {
+        return !this.requireKMUCheckbox(country);
+    };
+    KMUFormRules.prototype.requireKMUCheckbox = function (country) {
+        var groups = this.countryGroups.CA.concat(this.countryGroups.GDPR);
+        if (groups.contains(country)) {
+            return true;
+        }
+        return false;
+    };
+    KMUFormRules.prototype.useCombinedNewslettersCheckbox = function (country) {
+        if (this.countryGroups.CA.contains(country)) {
+            return true;
+        }
+        return false;
+    };
+    KMUFormRules.prototype.assumeBothNewsletters = function (country) {
+        var groups = this.countryGroups.CA.concat(this.countryGroups.GDPR);
+        if (!groups.contains(country)) {
+            return true;
+        }
+        return false;
+    };
+    KMUFormRules.prototype.assumeSitewideOnly = function (country) {
+        return false;
+    };
+    KMUFormRules.prototype.requireSpecialGeneralConsent = function (country) {
+        return this.requireResourcesOptins(country);
+    };
+    return KMUFormRules;
+}(BaseRules));
+var RegistrationFormRules = (function (_super) {
+    __extends(RegistrationFormRules, _super);
+    function RegistrationFormRules() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    RegistrationFormRules.prototype.useCombinedNewslettersCheckbox = function (country) {
+        if (!this.countryGroups.GDPR.contains(country)) {
+            return true;
+        }
+        return false;
+    };
+    RegistrationFormRules.prototype.assumeSitewideOnly = function (country) {
+        return false;
+    };
+    RegistrationFormRules.prototype.assumeBothNewsletters = function (country) {
+        return false;
+    };
+    RegistrationFormRules.prototype.requireGeneralConsent = function (country, applicable) {
+        if (applicable === void 0) { applicable = true; }
+        return this.countryGroups.GDPR.contains(country) && applicable;
+    };
+    RegistrationFormRules.prototype.requireMinimalExplicitConsent = function (country) {
+        return false;
+    };
+    return RegistrationFormRules;
+}(BaseRules));
+var MailmanFormRules = (function (_super) {
+    __extends(MailmanFormRules, _super);
+    function MailmanFormRules() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    MailmanFormRules.prototype.requireSpecialGeneralConsent = function (country) {
+        return this.requireResourcesOptins(country);
+    };
+    MailmanFormRules.prototype.requireMinimalExplicitConsent = function (country) {
+        return !this.allowPrechecked(country);
+    };
+    return MailmanFormRules;
+}(RegistrationFormRules));
+var BaseComplianceForm = (function () {
+    function BaseComplianceForm(options, newDefaults, rules) {
+        this.defaults = {
+            consentInputSet: '.minimum-explicit-required',
+            state_selector: 'select[id^=state]',
+            country_selector: 'select[id^=country]',
+            debug: false,
+            requireOneOptinSelector: '.kmunl_consent, .gdpr-consent-topics, .loose-consent-requirement',
+            allowPrecheckedSelector: '.allow-precheck, .allow-precheck input[type=checkbox]'
+        };
+        if (rules) {
+            this.rules = rules;
+        }
+        if (!this.rules) {
+            this.rules = new NewsletterFormRules(null, null);
+        }
+        var allDefaults = $.extend({}, this.defaults, newDefaults);
+        this.settings = $.extend({}, allDefaults, options);
+        this.$el = $(this.settings.selector);
+        this.$consentInputSet = $(this.settings.consentInputSet, this.$el);
+        this.$oneOptinSet = $(this.settings.requireOneOptinSelector, this.$el);
+        this.$stateInputSet = $(this.settings.state_selector, this.$el).parents('label');
+        this.$country = $(this.settings.country_selector, this.$el);
+        this.$state = $(this.settings.state_selector, this.$el);
+        this.$promptPhone = $('.prompt-phone', this.$el);
+        this.consentDirty = false;
+        if (this.validateFormStructure()) {
+            this.tracker = new SF.Widgets.ConsentTrackingForm(this.$el);
+            this.wireEvents();
+            this.renderForm();
+        }
+    }
+    BaseComplianceForm.prototype.country = function () {
+        return this.$country.val();
+    };
+    BaseComplianceForm.prototype.validateFormStructure = function () {
+        if (!this.$country.length || !this.$state.length) {
+            console.error("The form " + this.settings.selector + " is missing key fields to collect consent");
+        }
+        if (this.$el.hasClass('rendered')) {
+            return false;
+        }
+        this.$el.addClass('rendered');
+        return true;
+    };
+    BaseComplianceForm.prototype.prepop = function () {
+        if (!this.consentDirty
+            && !$('.has-error').length // on mailman forms
+            && !$('.fielderror:visible:not(:empty)').length // on user registration form
+        ) {
+            if (this.rules.allowPrechecked(this.country())) {
+                $(this.settings.allowPrecheckedSelector).prop('checked', true);
+            }
+            else {
+                this.uncheckAll($(this.settings.allowPrecheckedSelector));
+            }
+        }
+    };
+    BaseComplianceForm.prototype.wireEvents = function () {
+        //handle submit
+        this.$el.bind('submit.complianceForm', this.submit.bind(this));
+        // handle precheckable changes
+        $('input', this.settings.allowPrecheckedSelector).bind('change', this.validateConsent.bind(this));
+        //handle minumum explicit consent
+        $('input', this.$consentInputSet).bind('change', this.validateConsent.bind(this));
+        // handle blanket consent change
+        $('.input-set-agree-general input', this.$el).bind('change', this.validateConsent.bind(this));
+        // handle country change
+        this.$country.bind('change', this.countrySelected.bind(this));
+        // handle phone/sms checkbox change
+        $('input[type=checkbox]', this.$promptPhone).bind('change', this.promptPhone.bind(this));
+        // handle mailing lists check
+        $('.input-mailing-list input', this.$el).bind('change', this.validateConsent.bind(this));
+    };
+    BaseComplianceForm.prototype.submit = function (e) {
+        var validCountry = this.validateCountry();
+        var checked = this.validateConsent() && this.validateOneOptin();
+        if (!checked || !validCountry) {
+            return false;
+        }
+        SF.doRecaptcha(e, $('.g-recaptcha', this.$el), (function () {
+            this.$el.off('submit.complianceForm'); // don't run our submit handler any more, its ok
+            this.$el.submit();
+        }).bind(this));
+    };
+    ;
+    BaseComplianceForm.prototype.promptPhone = function (e) {
+        var $phone = $('.input-phone', this.$el);
+        if ($(".prompt-phone input:checkbox:checked").length > 0) {
+            $phone.removeClass('hide');
+            $('input', $phone).attr('required', 'required');
+        }
+        else {
+            $phone.addClass('hide');
+            $('input', $phone).removeAttr('required');
+        }
+    };
+    ;
+    BaseComplianceForm.prototype.validateCountry = function () {
+        var result = true;
+        if (!this.$country.val()) {
+            this.$country.parents('.input-set').addClass('has-error');
+            result = false;
+        }
+        else {
+            this.$country.parents('.input-set').removeClass('has-error');
+        }
+        if (this.rules.requireState(this.country()) && !this.$state.val()) {
+            this.$state.parents('.input-set').addClass('has-error');
+            result = false;
+        }
+        else {
+            this.$state.parents('.input-set').removeClass('has-error');
+        }
+        return result;
+    };
+    ;
+    BaseComplianceForm.prototype.validateOneOptin = function () {
+        if (this.rules.requireAtLeastOneOptIn(this.country())) {
+            var checked = $("input[type=checkbox]:checked", this.$oneOptinSet).length;
+            if (!checked) {
+                $(this.settings.requireOneOptinSelector, this.$el).addClass('has-error');
+                return false;
+            }
+            else {
+                $(this.settings.requireOneOptinSelector, this.$el).removeClass('has-error');
+            }
+            return checked;
+        }
+        else {
+            return true;
+        }
+    };
+    BaseComplianceForm.prototype.validateConsent = function () {
+        this.consentDirty = true;
+        if (this.rules.requireMinimalExplicitConsent(this.country())) {
+            var checked = $("input[type=checkbox]:checked", this.$consentInputSet).length;
+            if (!checked) {
+                $(this.settings.consentInputSet, this.$el).addClass('has-error');
+                return false;
+            }
+            else {
+                $(this.settings.consentInputSet, this.$el).removeClass('has-error');
+            }
+            return checked;
+        }
+        else {
+            return true;
+        }
+    };
+    ;
+    /**
+        Re-renders entire form - useful for actions that naturally reset large areas of the UI (like country change),
+        but too broad to be used for repainting minor content changes within the form
+    */
+    BaseComplianceForm.prototype.renderForm = function () {
+        if (this.rules.requireResourcesOptins(this.country())) {
+            //show two sections of checkboxes for gdpr
+            $('.gdpr-consent-requirement', this.$el).show();
+            //hide loose Resources opt in
+            this.hideField('.loose-consent-requirement');
+            // make the "Email" contact method required
+            $('input', '.input-set-consent-email', this.$el).attr('required', 'required');
+        }
+        else {
+            //hide the two sections of checkkboxes for GDPR (for Resources newsletter)
+            this.hideField('.gdpr-consent-requirement');
+            //show the single loose checkbox for Resources
+            $('.loose-consent-requirement', this.$el).show();
+            // make the Email contact-method unrequired
+            $('input', '.input-set-consent-email', this.$el).removeAttr('required');
+        }
+        if (!this.rules.allowPrechecked(this.country())) {
+            // uncheck the the Resources and non-gdpr checkboxes, if they've been checked
+            this.uncheckAll($('input', '.loose-consent-requirement, .input-set-agree-general', this.$el));
+        }
+        else {
+            // uncheck all GDPR-only checkboxes
+            this.uncheckAll($('input', '.gdpr-consent-requirement, .input-set-agree-general-gdpr', this.$el));
+        }
+        // show/hide State field if US
+        if (this.rules.requireState(this.country())) {
+            this.$stateInputSet.show();
+        }
+        else {
+            this.$stateInputSet.hide();
+        }
+        this.prepop();
+        // reset the correct phone field requirement
+        this.promptPhone();
+        if (this.rules.assumeBothNewsletters(this.country())) {
+            $('.newsletter-optin-assume', this.$el).val('sitewide research');
+        }
+        else if (this.rules.assumeSitewideOnly(this.country())) {
+            $('.newsletter-optin-assume', this.$el).val('sitewide');
+        }
+        this.renderGeneralConsent();
+    };
+    ;
+    BaseComplianceForm.prototype.renderGeneralConsent = function () {
+        if (this.rules.requireSpecialGeneralConsent(this.country())) {
+            //Hide the non-GDPR general agree text, and disable required on it
+            this.hideField('.input-set-agree-general');
+            //show, and make required, the GDPR general "agree" checkbox
+            $('.input-set-agree-general-gdpr', this.$el).show().find('input').attr('required', 'required');
+        }
+        else {
+            // hide the GDPR-specific general agree checkbox, and make it unrequired
+            this.hideField('.input-set-agree-general-gdpr');
+            // show the non-GDPR general agree checkbox, and make it required
+            $('.input-set-agree-general', this.$el).show().find('input').attr('required', 'required');
+        }
+    };
+    BaseComplianceForm.prototype.countrySelected = function () {
+        this.renderForm();
+    };
+    BaseComplianceForm.prototype.hideField = function (selector) {
+        this.uncheckAll($(selector, this.$el).hide().find('input').prop('required', false));
+    };
+    BaseComplianceForm.prototype.uncheckAll = function ($boxes_to_uncheck) {
+        // only uncheck if needed, so that the form isn't considered "changed" by the browser.
+        // otherwise FF will add the -moz-ui-invalid class and cause the box to be highlighted red
+        $boxes_to_uncheck.each(function () {
+            var $box = $(this);
+            if ($box.prop('checked')) {
+                $box.prop('checked', false);
+            }
+        });
+    };
+    return BaseComplianceForm;
+}());
+var NewsletterComplianceForm = (function (_super) {
+    __extends(NewsletterComplianceForm, _super);
+    function NewsletterComplianceForm() {
+        return _super !== null && _super.apply(this, arguments) || this;
+    }
+    return NewsletterComplianceForm;
+}(BaseComplianceForm));
+var KMUComplianceForm = (function (_super) {
+    __extends(KMUComplianceForm, _super);
+    function KMUComplianceForm(options, newDefaults) {
+        var _this = this;
+        var rules = new KMUFormRules();
+        _this = _super.call(this, { selector: options.selector || '.newsletter-subscribe-form' }, newDefaults, rules) || this;
+        _this.shortname = _this.$el.attr('data-shortname');
+        return _this;
+    }
+    KMUComplianceForm.prototype.renderForm = function () {
+        _super.prototype.renderForm.call(this);
+        // unset all assumed values; they'll get set if need be below
+        $('.input-assumed-newsletters, .input-assumed-kmu', this.$el).val('');
+        if (this.rules.requireKMUCheckbox(this.country())) {
+            $('.input-set-kmu', this.$el).show();
+        }
+        else {
+            this.hideField('.input-set-kmu');
+            $('.input-assumed-kmu', this.$el).val(this.shortname);
+        }
+        if (this.rules.useCombinedNewslettersCheckbox(this.country())) {
+            // show combined checkbox
+            $('.input-set-newsletters-optin-all', this.$el).show();
+            //hide individual newsletter checkboxes
+            this.hideField('.input-set-newsletters-optin-sitewide, .input-set-newsletters-optin-research');
+        }
+        else if (this.rules.assumeBothNewsletters(this.country())) {
+            // set assumed
+            $('.input-assumed-newsletters', this.$el).val('sitewide research');
+            // hide  all newsletter checkboxes
+            this.hideField('.input-set-newsletters-optin-all, .input-set-newsletters-optin-sitewide, .input-set-newsletters-optin-research');
+        }
+        else if (this.rules.requireResourcesOptins(this.country())) {
+            $('.input-set-newsletters-optin-sitewide', this.$el).show();
+            this.hideField('.input-set-newsletters-optin-all');
+            this.hideField('.input-set-newsletters-optin-research');
+        }
+    };
+    KMUComplianceForm.prototype.wireEvents = function () {
+        _super.prototype.wireEvents.call(this);
+        //handle kmu/nl combined consent
+        $('input', this.$oneOptinSet).bind('change', this.validateOneOptin.bind(this));
+    };
+    return KMUComplianceForm;
+}(BaseComplianceForm));
+var MailmanComplianceForm = (function (_super) {
+    __extends(MailmanComplianceForm, _super);
+    function MailmanComplianceForm(options, newDefaults) {
+        var _this = this;
+        var rules = new MailmanFormRules(null, null);
+        _this = _super.call(this, { selector: options.selector || '.mailman-subscribe-form',
+            consentInputSet: '.minimum-explicit-required', }, newDefaults, rules) || this;
+        return _this;
+    }
+    return MailmanComplianceForm;
+}(BaseComplianceForm));
+var RegistrationComplianceForm = (function (_super) {
+    __extends(RegistrationComplianceForm, _super);
+    function RegistrationComplianceForm(options, newDefaults) {
+        var _this = this;
+        var rules = new RegistrationFormRules(null, null);
+        _this = _super.call(this, { selector: options.selector || '#registration form',
+            consentInputSet: '.minimum-explicit-required',
+            newsletterOptinsSelector: '.input-set-newsletters-optin-sitewide, .gdpr-consent-topics' }, newDefaults, rules) || this;
+        return _this;
+    }
+    RegistrationComplianceForm.prototype.hasNewslettersSelected = function () {
+        return $(':checked', this.settings.newsletterOptinsSelector).length > 0;
+    };
+    RegistrationComplianceForm.prototype.wireEvents = function () {
+        _super.prototype.wireEvents.call(this);
+        //handle if newsletter optins are changed
+        $('input', this.settings.newsletterOptinsSelector).bind('change', this.renderNewsletterArea.bind(this));
+    };
+    RegistrationComplianceForm.prototype.renderForm = function () {
+        _super.prototype.renderForm.call(this);
+        this.renderNewsletterArea();
+    };
+    RegistrationComplianceForm.prototype.renderNewsletterArea = function () {
+        if (!this.rules.useCombinedNewslettersCheckbox(this.country())) {
+            this.hideField('.input-set-newsletters-optin-all');
+            $('.input-set-newsletters-optin-sitewide', this.$el).show();
+        }
+        else {
+            this.hideField('.input-set-newsletters-optin-sitewide');
+            $('.input-set-newsletters-optin-all', this.$el).show();
+        }
+        if (this.rules.requireGeneralConsent(this.country(), this.hasNewslettersSelected())) {
+            $('.input-set-agree-general', this.$el).show().addClass('minimum-explicit-required').find('input').attr('required', 'required');
+        }
+        else {
+            this.hideField('.input-set-agree-general');
+        }
+    };
+    return RegistrationComplianceForm;
+}(BaseComplianceForm));
+SF.Widgets = SF.Widgets || {};
+SF.Widgets.EmailComplianceWidget = NewsletterComplianceForm;
+SF.Widgets.KMUNSWidget = KMUComplianceForm;
+SF.Widgets.MailmanFormWidget = MailmanComplianceForm;
+SF.Widgets.RegistrationFormWidget = RegistrationComplianceForm;

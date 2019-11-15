@@ -1,0 +1,23 @@
+/*
+ * Select Text
+ *
+ * Can select the text within any node.
+ *
+ */
+/*global jQuery */
+jQuery.fn.seltext = function(win) {
+    win = win || window;
+    var doc = win.document, el = this[0], sel, range;
+    if (win.getSelection && doc.createRange) {
+        sel = win.getSelection();
+        range = doc.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+    } else if (doc.body.createTextRange) {
+        range = doc.body.createTextRange();
+        range.moveToElementText(el);
+        range.select();
+    }
+    return this;
+};

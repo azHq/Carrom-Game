@@ -1,0 +1,74 @@
+/*global SF, $, ga */
+/* This file is loaded near the beginning of the HTML body
+ * Only put what is really necessary here
+ * If possible, put JS at the end of the HTML body */
+
+SF.Logger = function() {
+    function log(level, message){
+        $.ajax({
+            url: '/logjs',
+            type: 'post',
+            data: { level: level, message: message },
+            global: false
+        });
+    }
+
+    function debug(message) {
+        log('debug', message);
+    }
+
+    function info(message) {
+        log('info', message);
+    }
+
+    function warning(message) {
+        log('warning', message);
+    }
+
+    function error(message) {
+        log('error', message);
+    }
+
+    function critical(message) {
+        log('critical', message);
+    }
+
+    return {
+        log: log,
+        debug: debug,
+        info: info,
+        warning: warning,
+        error: error,
+        critical: critical
+    };
+};
+
+SF.log = SF.Logger();
+
+SF.trackClick = function(url, category, action, options) {
+    // jump to location if GA is not present
+    if (!window.ga) {
+        document.location = url;
+    }
+    // setup args array
+    var args = ['send', 'event', category, action];
+    if (options) {
+        if (options.label) {
+            args.push(options.label);
+        }
+        if (options.value) {
+            args.push(options.value);
+        }
+        if (options.noninteraction) {
+            args.push("{'nonInteraction':"+ options.noninteraction.toString() + "}");
+        }
+    }
+    // try pushing args array to GA and making the jump after a short
+    // delay to allow the tracking request to go through
+    try {
+        ga.apply(this, args);
+        setTimeout('document.location = "' + url + '"', 100);
+    } catch(err){
+        document.location = url;
+    }
+};

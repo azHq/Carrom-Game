@@ -1,0 +1,702 @@
+/*global SF, jQuery, $, truste, Dropzone, Dragster, bizxPrebid, Sticky, grecaptcha */
+if (!window.SF) {
+    window.SF = {};
+}
+SF.Widgets = SF.Widgets || {};
+
+
+SF.Popover = function($popover) {
+    var klass = $popover.attr('id').replace(/-tooltip/, '');
+    var $parents = $popover.parents('header');
+    var isOpen = false;
+
+    function open(e) {
+        e.preventDefault();
+        // close other popovers
+        $('.tooltip:not(.' + klass + '):visible', $parents).trigger('popover:close');
+        $('.tooltip.' + klass, $popover).show();
+        $('body').on('click.popover', function(e2) {
+            if (e.timeStamp !== e2.timeStamp) {  // don't handle the click event that opened us
+                $popover.trigger('popover:close');
+            }
+        });
+        $(document).on('keydown.popover', function(e) {
+            if ((e.which || e.keyCode) === 27) {
+                e.preventDefault();
+                $popover.trigger('popover:close');
+            }
+        });
+        isOpen = true;
+    }
+
+    function close(e) {
+        if(!$(e.target.parentNode).closest('div').hasClass('tooltip')){
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        $parents.find('.tooltip:visible').hide();
+        $('body').off('click.popover');
+        $(document).off('keydown.popover');
+        isOpen = false;
+    }
+
+    $popover.on('click', 'a', function(e) {
+        if (!$(e.target).parents('.tooltip').length) { // don't handle clicks within the tooltip expanded area
+            if (isOpen) {
+                close(e);
+            } else {
+                if(!$(e.target).hasClass('not-available')){
+                  open(e);
+                }
+            }
+        }
+    });
+    $popover.on('popover:close', close);
+};
+
+SF.SDPopover = function($popover) {
+    // Mimic the dropdown menu behaviors from FDN.
+    $popover.addClass('is-dropdown-submenu-parent opens-right');
+    var trigger = $popover.find('a').first();
+    var submenu = trigger.siblings('ul').first();
+    submenu.addClass('submenu is-dropdown-submenu first-sub vertical');
+    submenu.parent().addClass('is-dropdown-submenu-parent opens-right');
+    trigger.hover(function() {
+        $popover.addClass('is-active');
+        submenu.addClass('js-dropdown-active');
+    }, function() {
+        trigger.parent().mouseleave(function() {
+            $popover.removeClass('is-active');
+            submenu.removeClass('js-dropdown-active');
+        });
+    });
+};
+
+jQuery(function($) {
+    // Setup the updater popover
+    var $updater = $('#updater-tooltip-sd').length ? $('#updater-tooltip-sd') : $('#updater-tooltip');
+    if ($updater.length) {
+        if ($updater.hasClass('fetch')) {
+            $.ajax({
+                url: '/user/updates/find' + location.search,
+                global: false,
+                success: function(data) {
+                    if (data.length) {
+                        $updater.hide()
+                                .html(data)
+                                .show();
+                        if (SF.sandiego || SF.sandiego_chrome) {
+                            SF.SDPopover($updater);
+                        }
+                        else {
+                            SF.Popover($updater);
+                        }
+                    }
+                }
+            });
+        }
+        else if (SF.sandiego || SF.sandiego_chrome) {
+            SF.SDPopover($updater);
+        }
+        else {
+            SF.Popover($updater);
+        }
+    }
+    // Setup the account popover
+    var $account_tip = $('#account-tooltip');
+    if ($account_tip.length) {
+        if ($('body.sandiego_chrome').length) {
+            SF.SDPopover($account_tip);
+        }
+        else {
+            SF.Popover($account_tip);
+        }
+    }
+
+    $(window).on('load', function(){
+        SF.floatingNewsletter = new SF.FloatingNewsletterSubscribe();
+    });
+
+    //wire up newsletter subscribe widgets ("NSW")
+    $('.newsletter-subscribe-form').each(SF.wire_up_subscribe_form);
+});
+
+
+SF.SimplifiedCookieNotice = function () {
+    return {
+        overlay: null,
+        banner: null,
+        body: null,
+        msg: "By using the SourceForge site, you agree to our use of cookies.",
+        win: null,
+        cookieKey: "tsn",
+
+        init: function () {
+            this.win = $(window);
+            this.body = $('body');
+            var cookie_value = $.cookie(this.cookieKey);
+            if (Number(cookie_value) !== 1) {
+                this._setupBanner();
+                this._setupListeners();
+            }
+
+            return this;
+        },
+
+        _setupListeners: function () {
+            var self = this;
+
+            this.body.on('click', '.truste-cookie-accept', function(evt) {
+                evt.preventDefault();
+                // Expires is set to 13 months or 30x13 = 390 days.
+                $.cookie(self.cookieKey, 1, {path: '/', expires: 390});
+                self.hide();
+            });
+
+            this.body.on('click', '.truste-cookie-denied', function (evt) {
+                evt.preventDefault();
+                if (truste.eu && truste.eu.clickListener) {
+                    truste.eu.clickListener();
+                }
+            });
+        },
+
+        _setupBanner: function () {
+            this._createBanner();
+            this._populateBanner();
+        },
+
+        _createBanner: function () {
+            this.banner = $('<div class="truste-sf-banner" />');
+        },
+
+        _populateBanner: function() {
+            this.body.prepend(this.banner);
+            var content = '<div class="truste-sf-inner">' +
+                          '<h2>'+ this.msg + '</h2>' +
+                          '<div id="truste-consent-buttons" class="button-container">' +
+                          '<button id="truste-consent-button" class="truste-cookie-accept">I consent to cookies</button><button class="truste-cookie-denied">More information</button>' +
+                          '</div></div>';
+            this.banner.html(content);
+
+        },
+        hide: function () {
+            this.banner.animate({height: 'toggle', opacity: 'toggle'}, 1000, 'linear', function () {
+                $(this).remove();
+            });
+        }
+    };
+};
+
+
+SF.FloatingNewsletterSubscribe = (function($){
+    var _defaults = {
+        element:'#newsletter-floating',
+        delay:5,
+        cookieName: 'suppressNewsletter'
+    };
+
+    function FloatingNewsletterSubscribe(options) {
+        var _self = this;
+        this.settings = $.extend(this.settings, _defaults, options);
+        setTimeout(this.init.bind(this), this.settings.delay * 1000);  // doing the delay right away also gives time for Allura ajax to run
+    }
+
+    FloatingNewsletterSubscribe.prototype.init = function(){
+        //init values
+        this.$el = $(this.settings.element);
+        this.height = this.$el.outerHeight();
+        this.$el.css('bottom', this.height*(-1));
+        this.suppressCookie = $.cookie(this.settings.cookieName);
+
+        if (this.$el && !this.suppressCookie) {
+            this.show();
+
+            // try initializing recaptcha again, for Allura floating form which loads in later
+            if (window.grecaptcha) {
+                recaptchaLoadCallback();
+            }
+
+            //wire close click
+            $('#btn-float-close', this.$el).click(this.hide.bind(this));
+
+            //wire submit
+            $('.form-itself input.bt', this.$el).click(this.suppress.bind(this));
+
+            $('.teaser input.bt', this.$el).click(this.showFullForm.bind(this));
+        }
+    };
+
+    FloatingNewsletterSubscribe.prototype.show = function(){
+        this.$el.css('bottom', 0);
+    };
+
+    FloatingNewsletterSubscribe.prototype.hide = function(){
+        this.$el.css('bottom', this.height*(-1));
+        this.suppress();
+    };
+
+    FloatingNewsletterSubscribe.prototype.suppress = function(){
+        $.cookie(this.settings.cookieName, true,  {expires:365, path:'/'});
+        return true;
+    };
+
+    FloatingNewsletterSubscribe.prototype.showFullForm = function(){
+        $('.teaser', this.$el).hide();
+        $('.form-itself', this.$el).show();
+        $('.form-itself input[type=email]', this.$el).focus();
+        this.height = this.$el.outerHeight();  // recalculate so that hiding works properly
+    };
+
+    return FloatingNewsletterSubscribe;
+})(jQuery);
+
+
+//------------------------------------
+//Widget for BlockThis
+//------------------------------------
+
+function getIndicesOf(searchStr, str, caseSensitive) {
+    var startIndex = 0, searchStrLen = searchStr.length;
+    var index, indices = [];
+    if (!caseSensitive) {
+        str = str.toLowerCase();
+        searchStr = searchStr.toLowerCase();
+    }
+    while ((index = str.indexOf(searchStr, startIndex)) > -1) {
+        indices.push(index);
+        startIndex = index + searchStrLen;
+    }
+    return indices;
+}
+
+SF.BlockThis = (function($){
+    var _defaults = {
+        element:'#overlay-blockthis-wrapper',
+        btnActivateSelector:'.btn-blockthis',
+        btnCloseSelector:'#btn-blockthis-close',
+        inputGptInfoSelector:'#gpt-info',
+        positionSticky: false
+    };
+
+    function BlockThis(options){
+        var _self = this;
+        this.settings = $.extend(this.settings, _defaults, options);
+
+        function handleActivate(e){
+            var $t = $(e.target),
+                $p = $t.parents('.draper'),
+                ad_unit = $p.attr('id').replace('_wrapped',''),
+                ad_id = $p.attr('data-id');
+            _self.$element.show();
+            _self.dropzone = enableDropzone();
+            if (_self.settings.positionSticky) {
+                // activate polyfill
+                new Sticky(_self.$element.get(0)).init();
+            } else {
+                repositionOverlay();
+                $(window).resize(repositionOverlay);
+            }
+            _self.capture(ad_unit, ad_id);
+            return false;
+        }
+        function handleSubmit(e){
+            return _self.submit();
+        }
+        function handleClose(e){
+            _self.close();
+            return false;
+        }
+        function enableDropzone(){
+            if (_self.dropzone) {
+                _self.dropzone.enable();
+                return _self.dropzone;
+            }
+            var myDropzone = new Dropzone('#blockthisForm', {
+                paramName: 'screenshot', // this is not antispam encoded, but it is still let through ok since the name is correct
+                autoProcessQueue: false,
+                maxFiles: 1,
+                maxFilesize: 2, // MB
+                clickable: '#upload-it',
+                thumbnailWidth: null,
+                thumbnailHeight: 35,
+                acceptedFiles: 'image/*,.png,.jpg,.jpeg,.gif',
+                addRemoveLinks: true,
+                renameFilename: function (name) {
+                    var parts = name.split('.'),
+                        ext = parts[parts.length - 1];
+                    return 'screenshot.' + ext;
+                },
+                previewsContainer: $('.dropzone-previews')[0],
+                previewTemplate: document.getElementById('dropzone-preview-template').innerHTML,
+                dictMaxFilesExceeded: 'You may only upload 1 screenshot.',
+                dictFallbackText: 'Screenshot (required):',
+                init: function () {
+                    this.on('success', function () {
+                        $('#messages').notify({message: 'Report submitted successfully.  Thanks!', status: 'success'});
+                        $('#btn-blockthis-close').trigger('click');
+                    });
+                    this.on('error', function (file, errorMessage, xhr) {
+                        // this can receive XHR submission errors, or internal errors (like too many files)
+                        var message = errorMessage.error || errorMessage;
+                        $('#messages').notify({message: message, status: 'error'});
+                        this.removeAllFiles(true);
+                        // re-enable button in case of submission error, so they can try again
+                        $('#btn-blockthis-submit').attr('disabled', false).attr('value', 'Submit Report');
+                    });
+                    this.on("addedfile", function (file) {
+                        $('#upload-it').hide();
+                        $('.dropzone-previews').show();
+                        // dragster:leave doesn't fire on its own, when ending, so we must fire it
+                        // otherwise if you remove the file and add another it'll be in the wrong state
+                        _self.$form.trigger('dragster:leave');
+                    });
+                    this.on("removedfile", function (file) {
+                        $('#upload-it').show();
+                        $('.dropzone-previews').hide();
+                    });
+                },
+            });
+            // https://github.com/enyo/dropzone/issues/438
+            var dragster = new Dragster(_self.$form[0]);
+            _self.$form.on('dragster:enter', function () {
+                _self.$form.addClass('dragging-active');
+            });
+            _self.$form.on('dragster:leave', function () {
+                _self.$form.removeClass('dragging-active');
+            });
+            return myDropzone;
+        }
+
+        function repositionOverlay(e){
+            var footerHeight = _self.$element.outerHeight();
+            var footerTop = ($(window).height()-footerHeight)+"px";
+            _self.$element.css({
+                top: footerTop
+            });
+        }
+
+        (function init() {
+            this.$element = $(this.settings.element);
+            if (!this.$element.length){
+                // widget isn't on page, bail.
+                return false;
+            }
+            // disable auto-initialization for this form
+            Dropzone.options.blockthisForm = false;
+
+            this.$btnClose = $(this.settings.btnCloseSelector);
+            this.$gptInfo = $(this.settings.inputGptInfoSelector);
+            this.$form = $('form', this.$element);
+
+            //wire events
+            $('body').on('click', this.settings.btnActivateSelector, handleActivate);
+            this.$form.submit(handleSubmit);
+            this.$btnClose.click(handleClose);
+        }).apply(this);
+    }
+
+    BlockThis.prototype.getSanitizeAdInfo = function(ad_unit, ad_id) {
+        var ad = null,
+            ad_info = {};
+        for (var x=0; x < SF.Ads.renderedAds.length; x++) {
+            ad = SF.Ads.renderedAds[x];
+            if (ad.slot.getName().indexOf(ad_unit) !== -1) {
+                break;
+            }
+        }
+        if (!ad) {
+            return null;
+        }
+
+        ad_info.contentUrl = ad.slot.getContentUrl();
+
+        var render_data = SF.Ads.Helpers.getAdRenderData(ad);
+        if (render_data) {
+            ad_info.position = ad_unit;
+            ad_info.third_party = render_data._is_3pas_;
+            ad_info.adsense_for_content = render_data._is_afc_;
+            ad_info.height = render_data._height_;
+            ad_info.width = render_data._width_;
+            ad_info.expandable = render_data._expandable_;
+            ad_info.html = render_data._html_;
+            var prebid_winner = window.bizxPrebid && bizxPrebid.Ads.prebidWinners && bizxPrebid.Ads.prebidWinners[ad_id];
+            if (prebid_winner) {
+                ad_info.ad_network = prebid_winner.bidder;
+                if (prebid_winner.ad) {
+                    ad_info.html = prebid_winner.ad;
+                } else if (prebid_winner.adUrl) {
+                    // nothing useful in this url :(
+                    // it will be used for an iframe
+                    ad_info.html = '';
+                } else {
+                    if (window.console && window.console.log) {
+                        window.console.log('No ad attributes on prebid response', prebid_winner);
+                    }
+                    ad_info.html = '';
+                }
+            }
+
+            ad_info.click_urls = [];
+            var $html = $(ad_info.html);
+            var $links = $.merge($html.find('a'),
+                                 $html.filter('a')); // filter for top-level, find for descendants
+            $links.each(function (i, obj) {
+                var querystring = obj.search.replace(/^\?/, '').split('&'),
+                    queryparams = {},
+                    split;
+                for (i = 0; i < querystring.length; i++) {
+                    split = querystring[i].split('=');
+                    queryparams[split[0]] = split[1];
+                }
+                if (queryparams.adurl) {
+                    ad_info.click_urls.push(queryparams.adurl);
+                }
+            });
+            ad_info.adurl_strings = [];
+            var adurl_idxs = getIndicesOf('adurl', render_data._html_);
+            var i;
+            for (i = 0; i < adurl_idxs.length; i++) {
+                ad_info.adurl_strings.push(render_data._html_.substr(adurl_idxs[i], 200));
+            }
+            ad_info.destination_strings = [];
+            var destination_idxs = getIndicesOf('destinationUrl', render_data._html_);
+            for (i = 0; i < destination_idxs.length; i++) {
+                ad_info.destination_strings.push(render_data._html_.substr(destination_idxs[i], 200));
+            }
+            ad_info.imgs = [];
+            var noscript_text = $.merge($html.find('noscript'),
+                                        $html.filter('noscript')).html();
+            var $noscript;
+            try {
+                $noscript = $(noscript_text);
+            } catch (err) {
+                // try html decoding
+                noscript_text = $('<div/>').html(noscript_text).text();
+                $noscript = $(noscript_text);
+            }
+            if (!$noscript.length) {
+                // <noscript> tags may end up within a text node and not properly recognized, so we'll look again
+                // "." doesn't match newlines so [\s\S] idiom used to match anything including \n
+                var noscript_match = render_data._html_.match(/<NOSCRIPT>([\s\S]+)<\/NOSCRIPT>/i);
+                if (noscript_match) {
+                    $noscript = $(noscript_match[1]);
+                }
+            }
+            var $imgs = $.merge($html.find('img'),
+                        $.merge($html.filter('img'),
+                        $.merge($noscript.find('img'),
+                                $noscript.filter('img'))));
+            $imgs.each(function(i, obj) {
+                var src = $(obj).attr('src');
+                if (src && src.indexOf('google.com/ads/measurement') === -1 &&
+                    src.indexOf('/branding/googlelogo/') === -1 &&
+                    src.indexOf('/adchoices/img/') === -1 &&
+                    !(obj.height === 1 && obj.width === 1)) {
+                    ad_info.imgs.push(src);
+                }
+            });
+            // guess at some standard bundle resources, although it may not necessarily exist
+            // given https://tpc.googlesyndication.com/sadbundle/XYZ/... you can download https://tpc.googlesyndication.com/simgad/XYZ which is a .zip of all the assets
+            var sadbundle_match = render_data._html_.match(/https:\/\/tpc\.googlesyndication\.com\/sadbundle\/[0-9]+\//);
+            if (sadbundle_match) {
+                ad_info.imgs.push(sadbundle_match[0] + 'backup.jpg');
+            }
+            var backup_match = render_data._html_.match(/http.*backup\.[a-z]{3,4}/);
+            if (backup_match) {
+                ad_info.imgs.push(backup_match[0]);
+            }
+
+            // this is for simple text only adx ads
+            // :not(:has(*)) gets all "leaf" nodes (no further children)
+            ad_info.text = '';
+            $html.filter('#adunit').find(':not(:has(*))').not('script').not('style').each(function(i, obj) {
+                var $elem = $(obj);
+                if ($elem.text()) {
+                    ad_info.text += $elem.text() + '\n';
+                }
+            });
+        }
+        if (window.console && window.console.log) {
+            window.console.log('Ad info is:', ad_info);
+        }
+        return ad_info;
+    };
+
+    // --------------------------------------------------------------------
+    // stores serialized json of captured ad info
+    // --------------------------------------------------------------------
+    BlockThis.prototype.persistCapturedInfo = function() {
+        this.$gptInfo.val(JSON.stringify(this.capturedAdInfo));
+    };
+
+    // --------------------------------------------------------------------
+    // main entry point to capture ad info
+    // --------------------------------------------------------------------
+    BlockThis.prototype.capture = function(ad_unit, ad_id) {
+        if (!SF.Ads.renderedAds) {
+            throw "Attempted to capture ad info, but feature is not enabled";
+        }
+        this.capturedAdInfo = this.getSanitizeAdInfo(ad_unit, ad_id);
+        this.persistCapturedInfo();
+        return this.capturedAdInfo;
+    };
+
+    // --------------------------------------------------------------------
+    // pushes user submission to SF API endpoint.
+    // --------------------------------------------------------------------
+    BlockThis.prototype.submit = function() {
+        var form = this.$form[0];
+        if (form && form.checkValidity && !form.checkValidity()) {
+            // built in validation exists and fails, so let it run
+            return true;
+        }
+        if (this.dropzone.getQueuedFiles && !this.dropzone.getQueuedFiles().length) {
+            $('#messages').notify({message: 'You must provide a screenshot file.', status: 'error'});
+            return false;
+        }
+        $('input[type=submit]', this.$form).attr('disabled', true).attr('value', 'Submitting...');
+        if (this.dropzone.processQueue) {
+            this.dropzone.processQueue();
+            return false;
+        } else {
+            // fallback, no dropzone, do regular submit
+            return true;
+        }
+    };
+
+    // --------------------------------------------------------------------
+    // Closes the widget and cleans it up for next time
+    // --------------------------------------------------------------------
+    BlockThis.prototype.close = function() {
+        this.$element.hide();
+        this.dropzone.removeAllFiles(true);
+        this.dropzone.disable();
+        $('#btn-blockthis-submit').attr('disabled', false).attr('value', 'Submit Report');
+        // reset all fields except the special ones
+        this.$form.find('input').each(function(i, elem) {
+            if (elem.name !== "_visit_cookie" &&
+                elem.name !== "timestamp" &&
+                elem.name !== "spinner" &&
+                elem.name !== "" ) {
+                $(elem).val('');
+            }
+        });
+        return false;
+    };
+
+    return BlockThis;
+}(window.jQuery));
+
+SF.blockThis = new SF.BlockThis({positionSticky: $('body').hasClass('sandiego')});
+
+SF.MyProjects = (function($) {
+    function MyProjects() {
+        this.init();
+    }
+
+    MyProjects.prototype.init = function() {
+        if (!$('#account-tooltip').length) {
+            return;
+        }
+        this.loaded = false;
+        this.$logout_li = $('.tooltip.account b[title="Log Out"]').parents('li:first');
+        this.pending();
+        $(window).on('load', this.load.bind(this));  // ok to be pretty late, often isn't even needed
+        $('#account-tooltip').click(this.load.bind(this));  // make sure we load immediately if they click on us
+    };
+
+    MyProjects.prototype.pending = function() {
+        this.$logout_li.before('<li class="projects-loading">loading your projects...</li>');
+    };
+
+    MyProjects.prototype.load = function() {
+        if (this.loaded) {
+            return;
+        }
+        this.loaded = true;
+        var user_profile_url = $('div#account-tooltip').length ? $('#account-tooltip > a').attr('href') : $('#account-tooltip > li > a').attr('href');
+        var rest_api_url = '/rest' + user_profile_url;
+        $.ajax({
+            url: rest_api_url,
+            context: this,
+            global: false,
+            success: function(data) {
+                $('.projects-loading').remove();
+                var my_projects_html = [];
+                for (var i = 0; i < data.projects.length; i++) {
+                    var proj = data.projects[i];
+                    var escaped_proj_name = $('<i></i>').text(proj.name).html();
+                    my_projects_html.push('<li><a href="' + proj.url + '">' + escaped_proj_name + '</a></li>');
+                }
+                this.$logout_li.before(my_projects_html.join(''));
+            },
+            error: function() {
+                this.loaded = false;
+            }
+        });
+    };
+
+    return MyProjects;
+})(jQuery);
+
+SF.myProjects = new SF.MyProjects();
+
+
+/*
+ Set up reCaptcha bindings.  The automatic setup doesn't work with multiple captcha forms on a page.
+
+ https://developers.google.com/recaptcha/docs/invisible#js_api
+ */
+SF.captchaSuccessCallbacks = {};
+SF.doRecaptcha = function(event, $recap_elem, success_callback) {
+    if ($recap_elem.length === 0) {
+        if (window.console && window.console.log) {
+            window.console.log('No recaptcha element found');
+        }
+        success_callback();
+        return;
+    }
+    var gcaptcha_id = $recap_elem.data('sf-recaptcha-id');
+    if (gcaptcha_id === undefined) {
+        window.alert('reCAPTCHA did not get loaded.');
+    } else {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();  // this prevents other form.submit handlers from running
+        SF.captchaSuccessCallbacks[gcaptcha_id] = success_callback;
+        // show the captcha modal (if necessary)
+        grecaptcha.execute(gcaptcha_id);
+    }
+};
+
+function recaptchaLoadCallback() {
+    $('.g-recaptcha').each(function() {
+        var $recap_elem = $(this);
+        if ($recap_elem.data('sf-recaptcha-id') !== undefined) {
+            return;
+        }
+        var $form = $recap_elem.parents('form');
+        // set up the captcha.  We're invisible so "render" is a bit misleading
+        var gcaptcha_id = grecaptcha.render(
+            this,
+            {
+                'callback': function (token) {
+                    gcaptcha_id = $recap_elem.data('sf-recaptcha-id');
+                    SF.captchaSuccessCallbacks[gcaptcha_id]();
+                },
+            },
+            true /* inherit (use data- attrs) */
+        );
+        $recap_elem.data('sf-recaptcha-id', gcaptcha_id);
+
+        if ($recap_elem.data('run-automatically') !== undefined) {
+            $form.on('submit.checkCaptcha', function(e) {
+                SF.doRecaptcha(e, $recap_elem, function() {
+                    $form.off('submit.checkCaptcha');
+                    $form.submit();
+                });
+            });
+        }
+    });
+}

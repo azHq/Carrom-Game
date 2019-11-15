@@ -1,0 +1,27 @@
+/*global net, SF, $, console */
+
+SF.Ads.showContentForAdblock = function(){
+    //the ads have already been written; just need to show it.
+    if (SF.adblock && SF.Ads.Template7) {
+        $('#content-for-adblock').show();
+        $('#sterling-primary').hide();
+    }
+};
+
+//Watch for leadgen resize message
+//Also serves as general signal that leadgen served.
+SF.Ads.watchLeadgenResize = function(customHandler)
+{
+    window.addEventListener('message', receiveMessage, false);
+    function receiveMessage(evt){
+        if (evt.data && evt.data.lf_iframeid && evt.data.lf_height) {
+            //resize iframe to fit larger leadgen form
+            document.getElementById(evt.data.lf_iframeid).height = (evt.data.lf_height) + "px";
+
+        }
+        //Additional handler for presence of leadgen
+        if (evt.data && evt.data.lf_disable_redirect && customHandler) {
+            customHandler();
+        }
+    }
+};

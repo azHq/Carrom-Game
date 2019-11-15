@@ -1,0 +1,161 @@
+/*global net, strings, $, SF, ga, console, jQuery */
+
+// Only do stuff here that is __truly__ global, please!
+
+// Our own browser sniffing util, based on jQuery's deprecated code
+net.sf.ua = navigator.userAgent.toLowerCase();
+net.sf.Browser = {
+    safari: /webkit/.test( net.sf.ua ) && !/chrome/.test( net.sf.ua ),
+    chrome: /^(?!.*edge).*chrome.*$/.test( net.sf.ua ),
+    opera: /opera/.test( net.sf.ua ),
+    msie: /msie/.test( net.sf.ua ) && !/opera/.test( net.sf.ua ),
+    mozilla: /mozilla/.test( net.sf.ua ) && !/(compatible|webkit)/.test( net.sf.ua ),
+    edge: /edge/.test( net.sf.ua ),
+};
+
+$(function() {
+    $('.ie7 .ico[data-icon]').each(function() {
+        var $this = $(this);
+        $this.text($this.attr('data-icon'));
+        $this.css('display', 'inline');
+        $this.css('padding', '0 10px ' + Math.max(16, $this.height()) + 'px 0');
+        $this.css('height', '0px');
+    });
+
+    // Setup notification messages
+    $('#messages').notifier();
+
+    // Make all textareas autogrow, per SFPY-103
+    // check first, so we don't need autoResize plugin included on download page
+    var $textareas = $('textarea');
+    if ($textareas.length && $textareas.elastic) {
+        $textareas.elastic();
+    }
+
+    // Setup widget close handler
+    $('.ui-dialog-titlebar-close').click(function(e){
+        $(this).closest('.ui-widget').hide();
+        e.preventDefault();
+    });
+
+    // Close modal dialog when transparent cover behind it is clicked.
+    $('.ui-widget-overlay').on('click', function(){
+        $('.ui-dialog').dialog('close');
+    });
+
+    // Busy spinner
+    var $busy = $('#busy-spinner');
+    $busy.hide();
+    $busy.ajaxStart(function() {
+        if(!window.location.toString().match('upload')){
+            $busy.show();
+        }
+    });
+    $busy.ajaxStop(function() {
+        $busy.hide();
+    });
+
+    // Attach event handling as needed
+    if (window.ga) {
+        $('*[data-event-category]').each(function() {
+            var category = $(this).attr('data-event-category'),
+                action = $(this).attr('data-event-action'),
+                options = {};
+            if ($(this).attr('data-event-label')) {
+                options.label = $(this).attr('data-event-label');
+            }
+            if ($(this).attr('data-event-value')) {
+                options.value = $(this).attr('data-event-value');
+            }
+            if ($(this).attr('data-event-noninteraction')) {
+                options.noninteraction = $(this).attr('data-event-noninteraction');
+            }
+            if (this.tagName.toLowerCase() === 'a') {
+                $(this).click(function(e) {
+                    e.preventDefault();
+                    SF.trackClick(this.href, category, action, options);
+                });
+            } else {
+                ga('send', 'event', category, action, options.label, options.value, {'nonInteraction': options.noninteraction});
+            }
+        });
+    }
+});
+
+
+if ($ && $.tablesorter) {
+    $.tablesorter.addParser({
+        id: 'localnum',
+        is: function(s) {
+            // return false so this parser is not auto detected
+            return false;
+        },
+        format: function(s) {
+            return parseInt(s.split(',').join(''), 10);
+        },
+        // set type, either numeric, text, or natural
+        type: 'numeric'
+    });
+}
+
+function addCommas(num) {
+    // http://stackoverflow.com/questions/1990512/add-comma-to-numbers-every-three-digits-using-jquery/1990590#1990590
+    return String(num).replace(new RegExp('(\\d)(?=(\\d\\d\\d)+(?!\\d))', 'g'), "$1,");
+}
+
+function getQuerystring(key, default_) {
+    if (default_===null) { default_=""; }
+    key = key.replace(/[\[]/,"\\[").replace(/[\]]/,"\\]");
+    var regex = new RegExp("[\\?&]"+key+"=([^&#]*)");
+    var qs = regex.exec(window.location.href);
+    if(qs === null) {
+        return default_;
+    }
+    else {
+        return qs[1];
+    }
+}
+
+if (SF.seo_debug) {
+    $(function () {
+        $('a').each(function () {
+            var href = $(this).attr('href');
+            var str_href = String(href);
+            var re = new RegExp("^(http|https):\/\/(?!(?:sourceforge.net|(.*).sb.sf.net)).*", "gi");
+            var matches = str_href.search(re);
+            if (matches >= 0) {
+                $(this).css({'background': '#900000', 'color': '#fff'});
+            }
+        });
+    });
+}
+
+
+$(function(){
+    // ad block measurement
+    // request green.gif and ad.gif at same time.
+    // only perform adblock comparison if there are ads on the page,
+    // and if the switch is active.
+    if (SF && SF.ad_block_measurement && window.gptadslots) {
+        var $body = $('body');
+        var now = (new Date()).getTime();
+        $body.append('<img src="/cdn/con/img/green.gif?' + now + '" alt="" style="display:none">');
+        if (window.googletag && !SF.Ads.gpt_blocked){
+            $body.append('<img src="/cdn/con/img/ad.gif?' + now + '" alt="" style="display:none">');
+        }
+    }
+
+    if (SF && SF.adblock) {
+        $('body').addClass('blocked');
+    }
+});
+
+// override the super-high initial value; was causing problems with modals created via admin navbar
+if ($.fn.qtip){
+    $.fn.qtip.zindex = 1;
+}
+
+if ($('#sendLinkModal').length) {
+    SF.sendLinkConsentTracking = new SF.Widgets.ConsentTrackingForm($('.send-link-form'));
+    SF.sendLinkWidget = new SF.Widgets.SendLinkWidget({modalID:'#sendLinkModal'});
+}
